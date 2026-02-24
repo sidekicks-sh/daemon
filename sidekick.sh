@@ -390,13 +390,13 @@ reserve_task() {
 }
 
 validate_task_fields() {
-  local task_id="$1" run_id="$2" repo_url="$3" repo_name="$4" base_branch="$5" branch="$6" instructions="$7" pr_title="$8"
+  local task_id="$1" run_id="$2" task_title="$3" repo_url="$4" repo_name="$5" base_branch="$6" branch="$7" instructions="$8"
 
-  if [[ -z "${task_id}" || -z "${run_id}" || -z "${repo_url}" || -z "${repo_name}" || -z "${base_branch}" || -z "${branch}" || -z "${instructions}" || -z "${pr_title}" ]]; then
+  if [[ -z "${task_id}" || -z "${run_id}" || -z "${repo_url}" || -z "${repo_name}" || -z "${base_branch}" || -z "${branch}" || -z "${instructions}" || -z "${task_title}" ]]; then
     return 1
   fi
 
-  if [[ "${run_id}" == "null" || "${repo_url}" == "null" || "${repo_name}" == "null" || "${base_branch}" == "null" || "${branch}" == "null" || "${instructions}" == "null" || "${pr_title}" == "null" ]]; then
+  if [[ "${run_id}" == "null" || "${repo_url}" == "null" || "${repo_name}" == "null" || "${base_branch}" == "null" || "${branch}" == "null" || "${instructions}" == "null" || "${task_title}" == "null" ]]; then
     return 1
   fi
 
@@ -512,7 +512,7 @@ run_agent() {
 
 # ─── commit, push, and open a PR ────────────────────────────────────────────
 commit_and_push() {
-  local repo_path="$1" branch="$2" pr_title="$3"
+  local repo_path="$1" branch="$2" title="$3"
 
   # Check if the agent actually changed anything
   if git -C "$repo_path" diff --quiet && git -C "$repo_path" diff --cached --quiet; then
@@ -523,7 +523,7 @@ commit_and_push() {
   fi
 
   git -C "$repo_path" add -A || return 1
-  git -C "$repo_path" commit -m "${pr_title}" -q || return 1
+  git -C "$repo_path" commit -m "${title}" -q || return 1
   log_ok "Committed changes"
 
   git -C "$repo_path" push -u origin "$branch" -q || return 1
@@ -531,7 +531,7 @@ commit_and_push() {
 
   # Open a PR via gh
   (cd "$repo_path" && gh pr create \
-    --title "$pr_title" \
+    --title "$title" \
     --head "$branch" \
     --fill-first 2>/dev/null) && log_ok "Pull request created" \
     || log_warn "Could not create PR (may already exist)"
@@ -541,7 +541,7 @@ commit_and_push() {
 process_task() {
   local task_json="$1"
 
-  local task_id run_id task_title repo_url repo_name base_branch branch instructions pr_title
+  local task_id run_id task_title repo_url repo_name base_branch branch instructions
   task_id=$(echo "$task_json"      | jq -r '.taskId // empty')
   run_id=$(echo "$task_json"       | jq -r '.runId // empty')
   task_title=$(echo "$task_json"   | jq -r '.title // empty')
@@ -550,12 +550,11 @@ process_task() {
   base_branch=$(echo "$task_json"  | jq -r '.baseBranch // empty')
   branch=$(echo "$task_json"       | jq -r '.executionBranch // empty')
   instructions=$(echo "$task_json" | jq -r '.instructions // empty')
-  pr_title=$(echo "$task_json"     | jq -r '.prTitle // empty')
 
   CURRENT_RUN_ID="${run_id}"
   CURRENT_TASK_ID="${task_id}"
 
-  if ! validate_task_fields "${task_id}" "${run_id}" "${repo_url}" "${repo_name}" "${base_branch}" "${branch}" "${instructions}" "${pr_title}"; then
+  if ! validate_task_fields "${task_id}" "${run_id}" "${task_title}" "${repo_url}" "${repo_name}" "${base_branch}" "${branch}" "${instructions}"; then
     log_err "Task payload is missing required execution fields; cannot process"
     log_status "${task_id}" "failed" "invalid task payload"
     TASKS_FAILED=$(( TASKS_FAILED + 1 ))
@@ -615,7 +614,7 @@ process_task() {
   fi
 
   # 4) Commit + push + PR
-  if commit_and_push "$repo_path" "$branch" "$pr_title"; then
+  if commit_and_push "$repo_path" "$branch" "$task_title"; then
     log_ok "Task ${task_id} completed"
     log_status "$task_id" "succeeded" "PR opened"
     TASKS_COMPLETED=$(( TASKS_COMPLETED + 1 ))
