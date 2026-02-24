@@ -1,4 +1,4 @@
-# Sidekick Daemon
+# Sidekicks Daemon
 
 `sidekick.sh` is a lightweight autonomous worker that polls the Sidekicks control plane, runs coding tasks in git repos, then commits, pushes, and opens PRs.
 
