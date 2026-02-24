@@ -542,13 +542,13 @@ process_task() {
   local task_json="$1"
 
   local task_id run_id task_title repo_url repo_name base_branch branch instructions
-  task_id=$(echo "$task_json"      | jq -r '.taskId // empty')
-  run_id=$(echo "$task_json"       | jq -r '.runId // empty')
-  task_title=$(echo "$task_json"   | jq -r '.title // empty')
-  repo_url=$(echo "$task_json"     | jq -r '.repoUrl // empty')
-  repo_name=$(echo "$task_json"    | jq -r '.repoName // empty')
-  base_branch=$(echo "$task_json"  | jq -r '.baseBranch // empty')
-  branch=$(echo "$task_json"       | jq -r '.executionBranch // empty')
+  task_id=$(echo "$task_json"      | jq -r '.task_id // empty')
+  run_id=$(echo "$task_json"       | jq -r '.run_id // empty')
+  task_title=$(echo "$task_json"   | jq -r '.task_title // empty')
+  repo_url=$(echo "$task_json"     | jq -r '.repo_url // empty')
+  repo_name=$(echo "$task_json"    | jq -r '.repo_name // empty')
+  base_branch=$(echo "$task_json"  | jq -r '.base_branch // empty')
+  branch=$(echo "$task_json"       | jq -r '.execution_branch // empty')
   instructions=$(echo "$task_json" | jq -r '.instructions // empty')
 
   CURRENT_RUN_ID="${run_id}"
