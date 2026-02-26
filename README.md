@@ -9,7 +9,7 @@
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sidekicks-sh/daemon/main/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sidekicks-sh/daemon/refs/heads/main/setup.sh | bash
 ```
 
 ## Run
