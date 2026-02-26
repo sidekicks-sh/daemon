@@ -37,6 +37,7 @@ TASKS_FAILED=0
 CURRENT_STATUS="booting"
 CURRENT_RUN_ID=""
 CURRENT_TASK_ID=""
+COMMIT_AND_PUSH_RESULT=""
 DETACH=0
 NO_DETACH=0
 ACTION="run"
@@ -586,20 +587,46 @@ run_agent() {
 # ─── commit, push, and open a PR ────────────────────────────────────────────
 commit_and_push() {
   local repo_path="$1" branch="$2" title="$3"
+  COMMIT_AND_PUSH_RESULT="unknown_error"
 
   # Check if the agent actually changed anything
   if git -C "$repo_path" diff --quiet && git -C "$repo_path" diff --cached --quiet; then
     if [[ -z "$(git -C "$repo_path" ls-files --others --exclude-standard)" ]]; then
       log_warn "No changes detected – nothing to commit"
+      COMMIT_AND_PUSH_RESULT="no_changes"
       return 1
     fi
   fi
 
-  git -C "$repo_path" add -A || return 1
-  git -C "$repo_path" commit -m "${title}" -q || return 1
+  local status_output
+  if ! status_output=$(git -C "$repo_path" status --porcelain --branch); then
+    log_err "Failed to read git status before commit"
+    COMMIT_AND_PUSH_RESULT="status_failed"
+    return 1
+  fi
+  log "git status --porcelain --branch before commit:"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && log "  ${line}"
+  done <<< "$status_output"
+
+  if ! git -C "$repo_path" add -A; then
+    log_err "git add failed"
+    COMMIT_AND_PUSH_RESULT="add_failed"
+    return 1
+  fi
+
+  if ! git -C "$repo_path" commit -m "${title}" -q; then
+    log_err "git commit failed"
+    COMMIT_AND_PUSH_RESULT="commit_failed"
+    return 1
+  fi
   log_ok "Committed changes"
 
-  git -C "$repo_path" push -u origin "$branch" -q || return 1
+  if ! git -C "$repo_path" push -u origin "$branch" -q; then
+    log_err "git push failed"
+    COMMIT_AND_PUSH_RESULT="push_failed"
+    return 1
+  fi
   log_ok "Pushed branch ${branch}"
 
   # Open a PR via gh
@@ -608,6 +635,9 @@ commit_and_push() {
     --head "$branch" \
     --fill-first 2>/dev/null) && log_ok "Pull request created" \
     || log_warn "Could not create PR (may already exist)"
+
+  COMMIT_AND_PUSH_RESULT="success"
+  return 0
 }
 
 # ─── process a single task ──────────────────────────────────────────────────
@@ -695,9 +725,23 @@ process_task() {
     log_status "$task_id" "succeeded" "PR opened"
     TASKS_COMPLETED=$(( TASKS_COMPLETED + 1 ))
   else
-    log_warn "Task ${task_id} finished but no changes were made"
-    log_status "$task_id" "succeeded" "no changes"
-    TASKS_COMPLETED=$(( TASKS_COMPLETED + 1 ))
+    case "${COMMIT_AND_PUSH_RESULT}" in
+      no_changes)
+        log_warn "Task ${task_id} finished but no changes were made"
+        log_status "$task_id" "succeeded" "no changes"
+        TASKS_COMPLETED=$(( TASKS_COMPLETED + 1 ))
+        ;;
+      commit_failed|push_failed|status_failed|add_failed)
+        log_err "Task ${task_id} failed during ${COMMIT_AND_PUSH_RESULT}"
+        log_status "$task_id" "failed" "${COMMIT_AND_PUSH_RESULT}"
+        TASKS_FAILED=$(( TASKS_FAILED + 1 ))
+        ;;
+      *)
+        log_err "Task ${task_id} failed during commit/push"
+        log_status "$task_id" "failed" "commit/push failed"
+        TASKS_FAILED=$(( TASKS_FAILED + 1 ))
+        ;;
+    esac
   fi
 
   CURRENT_STATUS="idle"
