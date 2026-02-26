@@ -19,6 +19,12 @@ INSTALL_PATH="${INSTALL_DIR}/sidekick"
 echo "Sidekicks Daemon Installer"
 echo "────────────────────────────────────────"
 
+# Stop any running sidekick processes before installing
+if [[ -x "${INSTALL_PATH}" ]]; then
+  echo "Stopping any running sidekick processes..."
+  "${INSTALL_PATH}" stop 2>/dev/null || true
+fi
+
 # Create install directory if it doesn't exist
 if [[ ! -d "${INSTALL_DIR}" ]]; then
   echo "Creating ${INSTALL_DIR}..."
