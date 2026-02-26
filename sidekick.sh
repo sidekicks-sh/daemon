@@ -41,6 +41,58 @@ NO_DETACH=0
 ACTION="run"
 LOG_JSONL=0
 
+
+# ─── handle arguments-------------------─────────────────────────────────────
+usage() {
+  cat <<EOF
+Usage:
+  ./run.sh [run] [-d|--detach] [--log-file PATH]
+  ./run.sh status
+  ./run.sh stop
+
+Options:
+  -d, --detach       Run in background with minimal output
+      --no-detach    Internal flag used for detached re-exec
+      --log-file     Log file path in detached mode (default: ${LOG_FILE})
+  -h, --help         Show this help
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -d|--detach)
+        DETACH=1
+        ;;
+      --no-detach)
+        NO_DETACH=1
+        ;;
+      --log-file)
+        if [[ $# -lt 2 ]]; then
+          echo "--log-file requires a path" >&2
+          exit 1
+        fi
+        LOG_FILE="$2"
+        shift
+        ;;
+      run|status|stop)
+        ACTION="$1"
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+}
+
+
 # ─── logging (always to stderr so it never pollutes captured stdout) ─────────
 json_escape() {
   local s="${1:-}"
@@ -114,21 +166,6 @@ log_status() {
     -H "Content-Type: application/json" \
     -d "{\"id\":\"${task_id}\",\"runId\":\"${CURRENT_RUN_ID}\",\"status\":\"${status}\",\"message\":\"${detail}\"}" \
     > /dev/null || log_warn "Status update failed to send"
-}
-
-usage() {
-  cat <<EOF
-Usage:
-  ./run.sh [run] [-d|--detach] [--log-file PATH]
-  ./run.sh status
-  ./run.sh stop
-
-Options:
-  -d, --detach       Run in background with minimal output
-      --no-detach    Internal flag used for detached re-exec
-      --log-file     Log file path in detached mode (default: ${LOG_FILE})
-  -h, --help         Show this help
-EOF
 }
 
 read_pid_file() {
@@ -253,40 +290,6 @@ stop_sidekick() {
 
   echo "sidekick did not stop in time (pid ${pid})" >&2
   return 1
-}
-
-parse_args() {
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -d|--detach)
-        DETACH=1
-        ;;
-      --no-detach)
-        NO_DETACH=1
-        ;;
-      --log-file)
-        if [[ $# -lt 2 ]]; then
-          echo "--log-file requires a path" >&2
-          exit 1
-        fi
-        LOG_FILE="$2"
-        shift
-        ;;
-      run|status|stop)
-        ACTION="$1"
-        ;;
-      -h|--help)
-        usage
-        exit 0
-        ;;
-      *)
-        echo "Unknown argument: $1" >&2
-        usage >&2
-        exit 1
-        ;;
-    esac
-    shift
-  done
 }
 
 # ─── preflight: check required tools ────────────────────────────────────────
