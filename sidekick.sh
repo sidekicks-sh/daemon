@@ -15,6 +15,7 @@ set -euo pipefail
 #   SIDEKICK_AGENT             – coding agent to use: codex | opencode | claude (default: codex)
 #   SIDEKICK_PID_FILE          – path to pid file (default: ./sidekick.pid)
 #   SIDEKICK_LOG_FILE          – path to log file (default: ./sidekick.log)
+#   SIDEKICK_LOG_BATCH_SIZE    – number of agent-output lines per log batch (default: 20)
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +27,7 @@ POLL_INTERVAL="${SIDEKICK_POLL_INTERVAL:-10}"
 AGENT="${SIDEKICK_AGENT:-codex}"
 PID_FILE="${SIDEKICK_PID_FILE:-${SCRIPT_DIR}/sidekick.pid}"
 LOG_FILE="${SIDEKICK_LOG_FILE:-${SCRIPT_DIR}/sidekick.log}"
+LOG_BATCH_SIZE="${SIDEKICK_LOG_BATCH_SIZE:-20}"
 
 # ─── sidekick identity (populated by register_sidekick) ─────────────────────
 SIDEKICK_NAME="sidekick"       # fallback until registration
@@ -324,6 +326,11 @@ preflight() {
     exit 1
   fi
 
+  if ! [[ "${LOG_BATCH_SIZE}" =~ ^[1-9][0-9]*$ ]]; then
+    log_err "SIDEKICK_LOG_BATCH_SIZE must be a positive integer (got: ${LOG_BATCH_SIZE})"
+    exit 1
+  fi
+
   log_ok "All required tools found (${core_tools[*]}, agent=${AGENT})"
 }
 
@@ -572,9 +579,30 @@ run_agent() {
   output=$(run_agent_"${AGENT}" "$repo_path" "$instructions" "$system_prompt")
 
   if [[ ${LOG_JSONL} -eq 1 && -n "$output" ]]; then
+    local batch batch_count
+    batch=''
+    batch_count=0
+
     while IFS= read -r line; do
-      [[ -n "$line" ]] && emit_log "info" "agent_output" "$line"
+      [[ -z "$line" ]] && continue
+
+      if (( batch_count == 0 )); then
+        batch="$line"
+      else
+        batch+=$'\n'"$line"
+      fi
+      batch_count=$(( batch_count + 1 ))
+
+      if (( batch_count >= LOG_BATCH_SIZE )); then
+        emit_log "info" "agent_output" "$batch"
+        batch=''
+        batch_count=0
+      fi
     done <<< "$output"
+
+    if (( batch_count > 0 )); then
+      emit_log "info" "agent_output" "$batch"
+    fi
   fi
 
   if [[ -z "$output" ]]; then
