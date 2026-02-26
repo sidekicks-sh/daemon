@@ -350,6 +350,42 @@ register_sidekick() {
   log "  prompt : ${SIDEKICK_PROMPT}"
 }
 
+# ─── refresh persona from control plane ─────────────────────────────────────
+# Lightweight fetch of the sidekick's current persona (name, purpose, prompt).
+# Called before each task to ensure the agent has the latest configuration.
+refresh_persona() {
+  local registration_json
+
+  registration_json=$(curl -sf -X POST "${CONTROL_PLANE_URL}/sidekick/register" \
+    -H "Authorization: Bearer ${API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"agent\":\"${AGENT}\",\"hostname\":\"$(hostname)\",\"status\":\"${CURRENT_STATUS}\"}" \
+  ) || { log_warn "Could not refresh persona from control plane"; return; }
+
+  local new_name new_purpose new_prompt
+  new_name=$(echo "$registration_json" | jq -r '.name // "sidekick"')
+  new_purpose=$(echo "$registration_json" | jq -r '.purpose // "unknown"')
+  new_prompt=$(echo "$registration_json" | jq -r '.prompt // ""')
+
+  # Only log if something changed
+  if [[ "$new_name" != "$SIDEKICK_NAME" || "$new_purpose" != "$SIDEKICK_PURPOSE" || "$new_prompt" != "$SIDEKICK_PROMPT" ]]; then
+    log "Persona refreshed from control plane"
+    if [[ "$new_name" != "$SIDEKICK_NAME" ]]; then
+      log "  name: ${SIDEKICK_NAME} → ${new_name}"
+    fi
+    if [[ "$new_purpose" != "$SIDEKICK_PURPOSE" ]]; then
+      log "  purpose: ${SIDEKICK_PURPOSE} → ${new_purpose}"
+    fi
+    if [[ "$new_prompt" != "$SIDEKICK_PROMPT" ]]; then
+      log "  prompt updated"
+    fi
+  fi
+
+  SIDEKICK_NAME="$new_name"
+  SIDEKICK_PURPOSE="$new_purpose"
+  SIDEKICK_PROMPT="$new_prompt"
+}
+
 # ─── heartbeat ──────────────────────────────────────────────────────────────
 # Sends a pulse to the control plane before every sleep cycle so it knows
 # this sidekick is still alive and what it's up to.
@@ -600,6 +636,9 @@ process_task() {
     CURRENT_TASK_ID=""
     return
   fi
+
+  # Refresh persona to get latest prompt before running agent
+  refresh_persona
 
   log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   log "Processing task ${task_id}"
