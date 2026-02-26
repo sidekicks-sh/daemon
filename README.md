@@ -6,12 +6,18 @@
 - `bash`, `git`, `curl`, `jq`, `gh`
 - One agent CLI: `codex` (default), `opencode`, or `claude`
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sidekicks-sh/daemon/main/setup.sh | bash
+```
+
 ## Run
 ```bash
-./sidekick.sh run
-./sidekick.sh --detach run
-./sidekick.sh status
-./sidekick.sh stop
+sidekick run
+sidekick run --detach
+sidekick status
+sidekick stop
 ```
 
 ## Key env vars

@@ -17,19 +17,20 @@ set -euo pipefail
 #   SIDEKICK_LOG_FILE          – path to log file (default: ./sidekick.log)
 # ─────────────────────────────────────────────────────────────────────────────
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTROL_PLANE_URL="${SIDEKICK_CONTROL_PLANE_URL:-http://localhost:3000/api}"
 API_TOKEN="${SIDEKICK_API_TOKEN:-mock-token}"
 SIDEKICK_ID="${SIDEKICK_ID:-sidekick-001}"
-REPOS_DIR="${SIDEKICK_REPOS_DIR:-$(pwd)/repos}"
+REPOS_DIR="${SIDEKICK_REPOS_DIR:-${SCRIPT_DIR}/repos}"
 POLL_INTERVAL="${SIDEKICK_POLL_INTERVAL:-10}"
 AGENT="${SIDEKICK_AGENT:-codex}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${SIDEKICK_PID_FILE:-${SCRIPT_DIR}/sidekick.pid}"
 LOG_FILE="${SIDEKICK_LOG_FILE:-${SCRIPT_DIR}/sidekick.log}"
 
 # ─── sidekick identity (populated by register_sidekick) ─────────────────────
 SIDEKICK_NAME="sidekick"       # fallback until registration
 SIDEKICK_PURPOSE=""
+SIDEKICK_PROMPT=""
 STARTED_AT=$(date +%s)
 TASKS_COMPLETED=0
 TASKS_FAILED=0
@@ -445,12 +446,24 @@ create_branch() {
 # actually changed later in commit_and_push.
 
 run_agent_codex() {
-  local repo_path="$1" instructions="$2"
-  local output
-  if [[ ${LOG_JSONL} -eq 1 ]]; then
-    output=$(cd "$repo_path" && echo "$instructions" | codex exec --yolo 2>&1) || true
+  local repo_path="$1" instructions="$2" system_prompt="$3"
+  local output full_prompt
+
+  # Codex doesn't have a system prompt flag, so we prepend it to instructions
+  if [[ -n "${system_prompt}" ]]; then
+    full_prompt="<system>
+${system_prompt}
+</system>
+
+${instructions}"
   else
-    output=$(cd "$repo_path" && echo "$instructions" \
+    full_prompt="${instructions}"
+  fi
+
+  if [[ ${LOG_JSONL} -eq 1 ]]; then
+    output=$(cd "$repo_path" && echo "$full_prompt" | codex exec --yolo 2>&1) || true
+  else
+    output=$(cd "$repo_path" && echo "$full_prompt" \
       | codex exec --yolo 2>&1 \
       | tee /dev/stderr) || true
   fi
@@ -458,28 +471,46 @@ run_agent_codex() {
 }
 
 run_agent_opencode() {
-  local repo_path="$1" instructions="$2"
-  local output
+  local repo_path="$1" instructions="$2" system_prompt="$3"
+  local output full_prompt
+
+  # Opencode doesn't have a system prompt flag, so we prepend it to instructions
+  if [[ -n "${system_prompt}" ]]; then
+    full_prompt="<system>
+${system_prompt}
+</system>
+
+${instructions}"
+  else
+    full_prompt="${instructions}"
+  fi
+
   if [[ ${LOG_JSONL} -eq 1 ]]; then
-    output=$(cd "$repo_path" && opencode run "$instructions" 2>&1) || true
+    output=$(cd "$repo_path" && opencode run "$full_prompt" 2>&1) || true
   else
     output=$(cd "$repo_path" \
-      && opencode run "$instructions" 2>&1 \
+      && opencode run "$full_prompt" 2>&1 \
       | tee /dev/stderr) || true
   fi
   echo "$output"
 }
 
 run_agent_claude() {
-  local repo_path="$1" instructions="$2"
+  local repo_path="$1" instructions="$2" system_prompt="$3"
   # claude --dangerously-skip-permissions -p is the full-auto piped equivalent
   local output
+  local system_prompt_args=()
+
+  if [[ -n "${system_prompt}" ]]; then
+    system_prompt_args=(--system-prompt "$system_prompt")
+  fi
+
   if [[ ${LOG_JSONL} -eq 1 ]]; then
-    output=$(cd "$repo_path" && echo "$instructions" | claude --dangerously-skip-permissions -p 2>&1) || true
+    output=$(cd "$repo_path" && echo "$instructions" | claude --dangerously-skip-permissions -p "${system_prompt_args[@]}" 2>&1) || true
   else
     output=$(cd "$repo_path" \
       && echo "$instructions" \
-      | claude --dangerously-skip-permissions -p 2>&1 \
+      | claude --dangerously-skip-permissions -p "${system_prompt_args[@]}" 2>&1 \
       | tee /dev/stderr) || true
   fi
   echo "$output"
@@ -487,7 +518,7 @@ run_agent_claude() {
 
 # ─── dispatch to the active agent ───────────────────────────────────────────
 run_agent() {
-  local repo_path="$1" instructions="$2"
+  local repo_path="$1" instructions="$2" system_prompt="${3:-}"
 
   if [[ ! -d "${repo_path}/.git" ]]; then
     log_err "Repository path is not a git repository: ${repo_path}"
@@ -495,10 +526,13 @@ run_agent() {
   fi
 
   log "Running agent=${AGENT}…"
-  log "  prompt: \"${instructions}\""
+  if [[ -n "${system_prompt}" ]]; then
+    log "  system prompt: \"${system_prompt}\""
+  fi
+  log "  instructions: \"${instructions}\""
 
   local output
-  output=$(run_agent_"${AGENT}" "$repo_path" "$instructions")
+  output=$(run_agent_"${AGENT}" "$repo_path" "$instructions" "$system_prompt")
 
   if [[ ${LOG_JSONL} -eq 1 && -n "$output" ]]; then
     while IFS= read -r line; do
@@ -603,7 +637,7 @@ process_task() {
   }
 
   # 3) Run the coding agent
-  if run_agent "$repo_path" "$instructions"; then
+  if run_agent "$repo_path" "$instructions" "$SIDEKICK_PROMPT"; then
     log_ok "Agent (${AGENT}) finished"
     log_status "$task_id" "running" "agent complete"
   else
