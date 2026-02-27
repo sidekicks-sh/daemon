@@ -19,7 +19,7 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTROL_PLANE_URL="${SIDEKICK_CONTROL_PLANE_URL:-http://localhost:3000/api}"
+CONTROL_PLANE_URL="${SIDEKICK_CONTROL_PLANE_URL:-https://sidekicks.sh/api}"
 API_TOKEN="${SIDEKICK_API_TOKEN:-mock-token}"
 SIDEKICK_ID="${SIDEKICK_ID:-sidekick-001}"
 REPOS_DIR="${SIDEKICK_REPOS_DIR:-${SCRIPT_DIR}/repos}"
@@ -43,7 +43,7 @@ COMMIT_AND_PUSH_RESULT=""
 DETACH=0
 NO_DETACH=0
 ACTION="run"
-LOG_JSONL=0
+LOG_JSONL=1
 
 
 # ─── handle arguments-------------------─────────────────────────────────────
@@ -698,13 +698,7 @@ process_task() {
   # Refresh persona to get latest prompt before running agent
   refresh_persona
 
-  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   log "Processing task ${task_id}"
-  log "  repo:   ${repo_name} (${repo_url})"
-  log "  title:  ${task_title}"
-  log "  base:   ${base_branch}"
-  log "  branch: ${branch}"
-  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   CURRENT_STATUS="working"
   log_status "$task_id" "running" "started"
@@ -825,9 +819,6 @@ case "${ACTION}" in
     if [[ ${DETACH} -eq 1 && ${NO_DETACH} -eq 0 ]]; then
       start_detached
       exit $?
-    fi
-    if [[ ${NO_DETACH} -eq 1 ]]; then
-      LOG_JSONL=1
     fi
     ensure_single_instance
     main
