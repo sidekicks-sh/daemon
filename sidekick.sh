@@ -672,7 +672,7 @@ commit_and_push() {
 process_task() {
   local task_json="$1"
 
-  local task_id run_id task_title repo_url repo_name base_branch branch instructions
+  local task_id run_id task_title repo_url repo_name base_branch branch instructions category
   task_id=$(echo "$task_json"      | jq -r '.task_id // empty')
   run_id=$(echo "$task_json"       | jq -r '.run_id // empty')
   task_title=$(echo "$task_json"   | jq -r '.task_title // empty')
@@ -681,6 +681,7 @@ process_task() {
   base_branch=$(echo "$task_json"  | jq -r '.base_branch // empty')
   branch=$(echo "$task_json"       | jq -r '.execution_branch // empty')
   instructions=$(echo "$task_json" | jq -r '.instructions // empty')
+  category=$(echo "$task_json"     | jq -r '.category // empty')
 
   CURRENT_RUN_ID="${run_id}"
   CURRENT_TASK_ID="${task_id}"
@@ -728,7 +729,19 @@ process_task() {
   }
 
   # 3) Run the coding agent
-  if run_agent "$repo_path" "$instructions" "$SIDEKICK_PROMPT"; then
+  local agent_prompt="$SIDEKICK_PROMPT"
+  if [[ -n "$category" ]]; then
+    if [[ -n "$agent_prompt" ]]; then
+      agent_prompt="${agent_prompt}
+
+Task category: ${category}"
+    else
+      agent_prompt="Task category: ${category}"
+    fi
+    log "Task category: ${category}"
+  fi
+
+  if run_agent "$repo_path" "$instructions" "$agent_prompt"; then
     log_ok "Agent (${AGENT}) finished"
     log_status "$task_id" "running" "agent complete"
   else
