@@ -473,14 +473,28 @@ ensure_repo() {
   echo "$repo_path"
 }
 
-# ─── create (or reset) the task branch ──────────────────────────────────────
-create_branch() {
+# ─── check for branch on origin -------──────────────────────────────────────
+branch_exists_on_origin() {
   local repo_path="$1" branch="$2"
+  git -C "$repo_path" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1
+}
 
-  # Delete local branch if it already exists (clean slate)
+# ─── prepare task branch --------------──────────────────────────────────────
+prepare_branch() {
+  local repo_path="$1" base_branch="$2" branch="$3"
+
+  git -C "$repo_path" fetch origin -q || return 1
+  if branch_exists_on_origin "$repo_path" "$branch"; then
+    git -C "$repo_path" checkout -B "$branch" "origin/$branch" -q || return 1
+    log "Checked out existing branch ${branch}"
+    return 0
+  fi
+
+  git -C "$repo_path" checkout "$base_branch" -q 2>/dev/null || return 1
+  git -C "$repo_path" reset --hard "origin/${base_branch}" -q || return 1
   git -C "$repo_path" branch -D "$branch" 2>/dev/null || true
-
   git -C "$repo_path" checkout -b "$branch" -q || return 1
+
   log "Created branch ${branch}"
 }
 
@@ -716,10 +730,10 @@ process_task() {
   }
   log_status "$task_id" "running" "repo ready"
 
-  # 2) Create branch
-  create_branch "$repo_path" "$branch" || {
-    log_err "Failed to create branch"
-    log_status "$task_id" "failed" "could not create branch"
+  # 2) Prepare branch
+  prepare_branch "$repo_path" "$base_branch" "$branch" || {
+    log_err "Failed to prepare branch"
+    log_status "$task_id" "failed" "could not prepare branch"
     TASKS_FAILED=$(( TASKS_FAILED + 1 ))
     CURRENT_STATUS="idle"
     CURRENT_RUN_ID=""
