@@ -484,17 +484,15 @@ prepare_branch() {
   local repo_path="$1" base_branch="$2" branch="$3"
 
   git -C "$repo_path" fetch origin -q || return 1
+  git -C "$repo_path" clean -fd -q || return 1
+
   if branch_exists_on_origin "$repo_path" "$branch"; then
     git -C "$repo_path" checkout -B "$branch" "origin/$branch" -q || return 1
     log "Checked out existing branch ${branch}"
     return 0
   fi
 
-  git -C "$repo_path" checkout "$base_branch" -q 2>/dev/null || return 1
-  git -C "$repo_path" reset --hard "origin/${base_branch}" -q || return 1
-  git -C "$repo_path" branch -D "$branch" 2>/dev/null || true
-  git -C "$repo_path" checkout -b "$branch" -q || return 1
-
+  git -C "$repo_path" checkout -B "$branch" "origin/$base_branch" -q || return 1
   log "Created branch ${branch}"
 }
 
