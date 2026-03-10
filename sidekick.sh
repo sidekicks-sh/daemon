@@ -40,6 +40,7 @@ CURRENT_STATUS="booting"
 CURRENT_RUN_ID=""
 CURRENT_TASK_ID=""
 COMMIT_AND_PUSH_RESULT=""
+COMMIT_AND_PUSH_PR_URL=""
 DETACH=0
 NO_DETACH=0
 ACTION="run"
@@ -170,6 +171,56 @@ log_status() {
     -H "Content-Type: application/json" \
     -d "{\"id\":\"${task_id}\",\"runId\":\"${CURRENT_RUN_ID}\",\"status\":\"${status}\",\"message\":\"${detail}\"}" \
     > /dev/null || log_warn "Status update failed to send"
+}
+
+task_dashboard_url() {
+  local task_id="$1"
+  printf 'https://sidekicks.sh/dashbaord/tasks/%s' "$task_id"
+}
+
+append_task_link_to_body() {
+  local body="${1:-}" task_url="$2"
+
+  if [[ -n "${body}" ]] && grep -Fq "${task_url}" <<< "${body}"; then
+    printf '%s' "${body}"
+    return 0
+  fi
+
+  if [[ -n "${body}" ]]; then
+    printf '%s\n\nTask: %s' "${body}" "${task_url}"
+    return 0
+  fi
+
+  printf 'Task: %s' "${task_url}"
+}
+
+update_task_pr_link() {
+  local task_id="$1" run_id="$2" pr_url="$3"
+  local payload endpoint
+  local -a endpoints=(
+    "${CONTROL_PLANE_URL}/sidekick/task/update"
+    "${CONTROL_PLANE_URL}/sidekick/task/pr"
+    "${CONTROL_PLANE_URL}/sidekick/task/link"
+  )
+
+  payload=$(jq -cn \
+    --arg id "${task_id}" \
+    --arg runId "${run_id}" \
+    --arg pullRequestUrl "${pr_url}" \
+    '{id: $id, runId: $runId, pullRequestUrl: $pullRequestUrl, prUrl: $pullRequestUrl, url: $pullRequestUrl}')
+
+  for endpoint in "${endpoints[@]}"; do
+    if curl -sf -X POST "${endpoint}" \
+      -H "Authorization: Bearer ${API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "${payload}" > /dev/null 2>&1; then
+      log_ok "Updated task ${task_id} with PR URL"
+      return 0
+    fi
+  done
+
+  log_warn "Could not update task ${task_id} with PR URL via control plane API"
+  return 1
 }
 
 read_pid_file() {
@@ -626,8 +677,9 @@ run_agent() {
 
 # ─── commit, push, and open a PR ────────────────────────────────────────────
 commit_and_push() {
-  local repo_path="$1" branch="$2" title="$3"
+  local repo_path="$1" branch="$2" title="$3" task_id="${4:-}"
   COMMIT_AND_PUSH_RESULT="unknown_error"
+  COMMIT_AND_PUSH_PR_URL=""
 
   # Check if the agent actually changed anything
   if git -C "$repo_path" diff --quiet && git -C "$repo_path" diff --cached --quiet; then
@@ -669,12 +721,48 @@ commit_and_push() {
   fi
   log_ok "Pushed branch ${branch}"
 
-  # Open a PR via gh
-  (cd "$repo_path" && gh pr create \
-    --title "$title" \
+  # Create or update the PR and ensure the task link is present in the body.
+  local task_url pr_json pr_number pr_body updated_body create_output
+  task_url=$(task_dashboard_url "${task_id}")
+
+  pr_json=$(cd "$repo_path" && gh pr list \
     --head "$branch" \
-    --fill-first 2>/dev/null) && log_ok "Pull request created" \
-    || log_warn "Could not create PR (may already exist)"
+    --state open \
+    --json number,url,body \
+    --limit 1 2>/dev/null) || pr_json='[]'
+
+  if [[ "$(echo "${pr_json}" | jq 'length')" -eq 0 ]]; then
+    if create_output=$(cd "$repo_path" && gh pr create \
+      --title "$title" \
+      --head "$branch" \
+      --fill-first 2>/dev/null); then
+      log_ok "Pull request created"
+      [[ -n "${create_output}" ]] && COMMIT_AND_PUSH_PR_URL="${create_output}"
+    else
+      log_warn "Could not create PR (may already exist)"
+    fi
+
+    pr_json=$(cd "$repo_path" && gh pr list \
+      --head "$branch" \
+      --state open \
+      --json number,url,body \
+      --limit 1 2>/dev/null) || pr_json='[]'
+  fi
+
+  if [[ "$(echo "${pr_json}" | jq 'length')" -gt 0 ]]; then
+    pr_number=$(echo "${pr_json}" | jq -r '.[0].number')
+    pr_body=$(echo "${pr_json}" | jq -r '.[0].body // empty')
+    COMMIT_AND_PUSH_PR_URL=$(echo "${pr_json}" | jq -r '.[0].url // empty')
+    updated_body=$(append_task_link_to_body "${pr_body}" "${task_url}")
+
+    if [[ "${updated_body}" != "${pr_body}" ]]; then
+      if (cd "$repo_path" && gh pr edit "${pr_number}" --body "${updated_body}" >/dev/null 2>&1); then
+        log_ok "Pull request body updated with task link"
+      else
+        log_warn "Could not update PR body with task link"
+      fi
+    fi
+  fi
 
   COMMIT_AND_PUSH_RESULT="success"
   return 0
@@ -754,9 +842,14 @@ process_task() {
   fi
 
   # 4) Commit + push + PR
-  if commit_and_push "$repo_path" "$branch" "$task_title"; then
+  if commit_and_push "$repo_path" "$branch" "$task_title" "$task_id"; then
     log_ok "Task ${task_id} completed"
-    log_status "$task_id" "succeeded" "PR opened"
+    if [[ -n "${COMMIT_AND_PUSH_PR_URL}" ]]; then
+      update_task_pr_link "$task_id" "$run_id" "${COMMIT_AND_PUSH_PR_URL}" || true
+      log_status "$task_id" "succeeded" "PR opened: ${COMMIT_AND_PUSH_PR_URL}"
+    else
+      log_status "$task_id" "succeeded" "PR opened"
+    fi
     TASKS_COMPLETED=$(( TASKS_COMPLETED + 1 ))
   else
     case "${COMMIT_AND_PUSH_RESULT}" in
